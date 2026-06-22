@@ -1,7 +1,7 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AppRegistry, View, Text, Pressable, TextInput, Platform, Modal, Image, Animated, Easing,
-  KeyboardAvoidingView, StatusBar, NativeEventEmitter, NativeModules, ScrollView, ActivityIndicator,
+  KeyboardAvoidingView, StatusBar, NativeEventEmitter, NativeModules, ScrollView, ActivityIndicator, AppState,
 } from 'react-native';
 
 function nativeCapture() {
@@ -35,16 +35,46 @@ let CONFIG = {
   endpoint: 'http://100.107.27.3:8091/api/bug-reports',
 };
 
-function postBug({ endpoint, appId, version, note, screenshot }) {
-  return fetch(endpoint, {
+const FLAY_QUEUE = [];
+const FLAY_QUEUE_MAX = 10;
+
+function postBugOnce(payload) {
+  return fetch(payload.endpoint, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      appId, version, note, screenshot,
+      appId: payload.appId,
+      version: payload.version,
+      note: payload.note,
+      screenshot: payload.screenshot,
       source: 'friday-cockpit',
-      ts: new Date().toISOString(),
+      ts: payload.ts || new Date().toISOString(),
     }),
-  }).then(r => r.json()).catch((e) => ({ ok: false, error: String(e) }));
+  }).then(r => {
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    return r.json();
+  });
+}
+
+function postBug(payload) {
+  const stamped = { ...payload, ts: payload.ts || new Date().toISOString() };
+  return postBugOnce(stamped)
+    .then(res => (res && res.ok ? res : Promise.reject(new Error('server-reject'))))
+    .catch((e) => {
+      if (FLAY_QUEUE.length < FLAY_QUEUE_MAX) FLAY_QUEUE.push(stamped);
+      return { ok: false, error: String(e && e.message || e), queued: true };
+    });
+}
+
+async function flayDrainQueue() {
+  if (!FLAY_QUEUE.length) return 0;
+  const batch = FLAY_QUEUE.splice(0, FLAY_QUEUE.length);
+  let sent = 0;
+  for (const item of batch) {
+    try { const r = await postBugOnce(item); if (r && r.ok) sent++; else FLAY_QUEUE.push(item); }
+    catch { FLAY_QUEUE.push(item); }
+  }
+  return sent;
 }
 
 function fetchBugs({ endpoint, appId }) {
@@ -91,6 +121,12 @@ export function FlayProvider({ config = {}, children }) {
     const sub = emitter.addListener('FlayOpen', () => { handleOpen(); });
     return () => { try { sub && sub.remove(); } catch {} };
   }, [handleOpen]);
+
+  useEffect(() => {
+    const onChange = (state) => { if (state === 'active') flayDrainQueue().catch(() => {}); };
+    const sub = AppState.addEventListener('change', onChange);
+    return () => { try { sub && sub.remove(); } catch {} };
+  }, []);
 
   const ctx = useMemo(() => ({
     enabled: true,
@@ -163,10 +199,14 @@ function FlayOverlay({ snapUri }) {
     const res = await postBug({ endpoint, appId, version, note: text, screenshot: snapUri });
     setSubmitting(false);
     if (res && res.ok) {
-      setToast('Bug bildirildi.');
+      setToast('Gönderildi.');
       setNote('');
       if (screen === 'bugs') loadBugs();
       setTimeout(() => { setToast(null); }, 1400);
+    } else if (res && res.queued) {
+      setToast('Bağlanılamadı — tekrar denenecek.');
+      setNote('');
+      setTimeout(() => setToast(null), 2400);
     } else {
       setToast('Hata. Tekrar dene.');
       setTimeout(() => setToast(null), 2000);

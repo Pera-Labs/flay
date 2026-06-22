@@ -1,6 +1,6 @@
 {
   "name": "flay",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Flay — in-app overlay (snapshot card + bug list + bug reporter) for React Native / Expo apps.",
   "main": "index.js",
   "license": "MIT",
@@ -12,7 +12,7 @@
     "plugin": "./app.plugin.js"
   },
   "peerDependencies": {
-    "react": "*",
-    "react-native": "*"
+    "react": ">=18.0.0",
+    "react-native": ">=0.74.0"
   }
 }
