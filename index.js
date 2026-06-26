@@ -164,6 +164,34 @@ function FlayOverlay({ snapUri }) {
   const [note, setNote] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [toast, setToast] = useState(null);
+  const [pulling, setPulling] = useState(false);
+  const pullUpdate = async () => {
+    if (pulling) return;
+    setPulling(true);
+    try {
+      const Updates = require('expo-updates');
+      if (!Updates || !Updates.checkForUpdateAsync) {
+        setToast('expo-updates yüklü değil');
+        setTimeout(() => setToast(null), 2200);
+        setPulling(false);
+        return;
+      }
+      const r = await Updates.checkForUpdateAsync();
+      if (r && r.isAvailable) {
+        try { await Updates.fetchUpdateAsync(); } catch (e) {}
+        setToast('Güncelleme indirildi, yeniden başlatılıyor…');
+        setTimeout(async () => {
+          try { await Updates.reloadAsync(); } catch (e) { setPulling(false); setToast(null); }
+        }, 800);
+      } else {
+        setToast('Zaten en güncel sürümdesin');
+        setTimeout(() => { setToast(null); setPulling(false); }, 2200);
+      }
+    } catch (e) {
+      setToast('Hata: ' + String((e && e.message) || e).slice(0, 80));
+      setTimeout(() => { setToast(null); setPulling(false); }, 3000);
+    }
+  };
   const [bugs, setBugs] = useState(null);
   const [loadingBugs, setLoadingBugs] = useState(false);
   const { appName, appId, version, endpoint } = CONFIG;
@@ -246,14 +274,14 @@ function FlayOverlay({ snapUri }) {
                 </View>
               )}
             </Animated.View>
-            <View style={{ position: 'absolute', right: 14, top: '46%', alignItems: 'center', gap: 4 }}>
+            <Pressable onPress={pullUpdate} style={{ position: 'absolute', right: 14, top: '46%', alignItems: 'center', gap: 4 }}>
               <View style={{ width: 56, height: 56, borderRadius: 28, backgroundColor: T.toolsBlue, alignItems: 'center', justifyContent: 'center' }}>
-                <Text style={{ color: '#FFF', fontSize: 22 }}>⚙</Text>
+                <Text style={{ color: '#FFF', fontSize: 22 }}>{pulling ? '⟳' : '⚙'}</Text>
               </View>
               <View style={{ paddingHorizontal: 10, paddingVertical: 3, borderRadius: 10, backgroundColor: 'rgba(0,0,0,0.55)' }}>
-                <Text style={{ color: T.text, fontSize: 11 }}>Tools</Text>
+                <Text style={{ color: T.text, fontSize: 11 }}>{pulling ? 'Çekiyor…' : 'Yeni sürümü çek'}</Text>
               </View>
-            </View>
+            </Pressable>
           </View>
         )}
 
