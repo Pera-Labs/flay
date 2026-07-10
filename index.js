@@ -421,7 +421,7 @@ function FlayOverlay({ snapUri }) {
                 <Text style={{ color: '#FFF', fontSize: 20, fontWeight: '600' }}>+</Text>
               </Pressable>
             )}
-            {screen === 'home' && <Pressable hitSlop={8} onPress={openBugs} style={{ display: 'none' }} />}
+            {screen === 'home' && (<Pressable hitSlop={8} onPress={openBugs} style={{ paddingHorizontal: 12, height: 32, borderRadius: 16, backgroundColor: T.circleOff, alignItems: 'center', justifyContent: 'center' }}><Text style={{ color: '#FFFFFF', fontSize: 12, fontWeight: '600' }}>Bugs</Text></Pressable>)}
           </View>
         </View>
         )}
