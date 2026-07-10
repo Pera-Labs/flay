@@ -283,6 +283,7 @@ function FlayOverlay({ snapUri }) {
   const [loadingBugs, setLoadingBugs] = useState(false);
   const [adminToken, setAdminToken] = useState(null);
   const [tokenInput, setTokenInput] = useState('');
+  const [pair, setPair] = useState(null);
   const [features, setFeatures] = useState(null);
   const [loadingFeatures, setLoadingFeatures] = useState(false);
   const [featTitle, setFeatTitle] = useState('');
@@ -304,6 +305,15 @@ function FlayOverlay({ snapUri }) {
     setTokenInput('');
   }, [tokenInput]);
 
+  const startPairing = useCallback(async () => {
+    try {
+      const r = await fetch(apiBase(endpoint) + '/api/pair/start', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ appId }),
+      }).then((x) => x.json());
+      if (r && r.code) setPair(r);
+    } catch (e) {}
+  }, [endpoint, appId]);
+
   const scale = useRef(new Animated.Value(1.35)).current;
   const opacity = useRef(new Animated.Value(0)).current;
   useEffect(() => {
@@ -323,10 +333,32 @@ function FlayOverlay({ snapUri }) {
     setBugs((res && res.bugs) || []);
   }, [endpoint, appId, adminToken]);
 
+  // poll pairing status every 2s until the owner approves on Wishly
+  useEffect(() => {
+    if (screen !== 'bugs' || adminToken || !pair || !pair.code) return;
+    let alive = true;
+    const id = setInterval(async () => {
+      try {
+        const r = await fetch(apiBase(endpoint) + '/api/pair/' + pair.code).then((x) => x.json());
+        if (!alive) return;
+        if (r && r.status === 'approved' && r.apiKey) {
+          await AsyncStorage.setItem('__flay_admin_token', r.apiKey);
+          setAdminToken(r.apiKey); setPair(null);
+        } else if (r && (r.status === 'expired' || r.status === 'unknown')) {
+          setPair(null); startPairing();
+        }
+      } catch (e) {}
+    }, 2000);
+    return () => { alive = false; clearInterval(id); };
+  }, [screen, adminToken, pair, endpoint, startPairing]);
+
+  // once a token arrives (via approval or paste), load the bug list
+  useEffect(() => { if (adminToken && screen === 'bugs') loadBugs(); }, [adminToken]);
+
   const openBugs = useCallback(() => {
     setScreen('bugs');
-    if (adminToken) loadBugs();
-  }, [loadBugs, adminToken]);
+    if (adminToken) loadBugs(); else startPairing();
+  }, [loadBugs, adminToken, startPairing]);
 
   const loadFeatures = useCallback(async () => {
     setLoadingFeatures(true);
@@ -472,14 +504,18 @@ function FlayOverlay({ snapUri }) {
         {screen === 'bugs' && !adminToken && (
           <View style={{ flex: 1, paddingHorizontal: 20, paddingTop: 40 }}>
             <Text style={{ color: T.textMutedLight, fontSize: 13, marginBottom: 14 }}>
-              Sign in on Wishly to connect this app. Owners get admin access to bug reports; everyone else can suggest features.
+              Open Wishly, sign in and approve this device. Once you approve, this screen activates automatically — no copy/paste.
             </Text>
             <Pressable
-              onPress={() => Linking.openURL('https://wishly.tools/connect?app=' + encodeURIComponent(appId))}
-              style={{ height: 48, borderRadius: 14, backgroundColor: T.accent, alignItems: 'center', justifyContent: 'center', marginBottom: 16 }}>
-              <Text style={{ color: '#0A0E13', fontSize: 15, fontWeight: '700' }}>Get my token from Wishly →</Text>
+              onPress={() => Linking.openURL((pair && pair.url) || ('https://wishly.tools/connect?app=' + encodeURIComponent(appId)))}
+              style={{ height: 48, borderRadius: 14, backgroundColor: T.accent, alignItems: 'center', justifyContent: 'center', marginBottom: 12 }}>
+              <Text style={{ color: '#0A0E13', fontSize: 15, fontWeight: '700' }}>Open Wishly to approve →</Text>
             </Pressable>
-            <Text style={{ color: T.textMutedLight, fontSize: 12, marginBottom: 8 }}>Already have your key? Paste it here.</Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, marginBottom: 18 }}>
+              <ActivityIndicator size="small" color={T.accent} />
+              <Text style={{ color: T.accent, fontSize: 12.5 }}>Waiting for approval… keep Wishly open, then return.</Text>
+            </View>
+            <Text style={{ color: T.textMutedLight, fontSize: 12, marginBottom: 8 }}>Or paste a key manually.</Text>
             <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: T.darkCard, borderRadius: 14, paddingHorizontal: 12 }}>
               <TextInput
                 value={tokenInput}
