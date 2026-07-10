@@ -2,6 +2,7 @@ import React, { createContext, useCallback, useContext, useEffect, useMemo, useR
 import {
   AppRegistry, View, Text, Pressable, TextInput, Platform, Modal, Image, Animated, Easing,
   KeyboardAvoidingView, StatusBar, NativeEventEmitter, NativeModules, ScrollView, ActivityIndicator, AppState,
+  Linking,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
@@ -471,8 +472,14 @@ function FlayOverlay({ snapUri }) {
         {screen === 'bugs' && !adminToken && (
           <View style={{ flex: 1, paddingHorizontal: 20, paddingTop: 40 }}>
             <Text style={{ color: T.textMutedLight, fontSize: 13, marginBottom: 14 }}>
-              Bug listesi sadece operatöre açık. Admin token gir.
+              Sign in on Wishly to connect this app. Owners get admin access to bug reports; everyone else can suggest features.
             </Text>
+            <Pressable
+              onPress={() => Linking.openURL('https://wishly.tools/connect?app=' + encodeURIComponent(appId))}
+              style={{ height: 48, borderRadius: 14, backgroundColor: T.accent, alignItems: 'center', justifyContent: 'center', marginBottom: 16 }}>
+              <Text style={{ color: '#0A0E13', fontSize: 15, fontWeight: '700' }}>Get my token from Wishly →</Text>
+            </Pressable>
+            <Text style={{ color: T.textMutedLight, fontSize: 12, marginBottom: 8 }}>Already have your key? Paste it here.</Text>
             <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: T.darkCard, borderRadius: 14, paddingHorizontal: 12 }}>
               <TextInput
                 value={tokenInput}
