@@ -34,16 +34,32 @@ function nativeCapture() {
 
 const FlayCtx = createContext({ enabled: false, open: () => {}, close: () => {} });
 
+// Feedback SDK design tokens (v0.7.0) — iOS system palette, #0A84FF accent.
 const T = {
-  bg: '#000000',
-  panel: '#15151D',
-  panelMuted: '#1C1C26',
-  text: '#FFFFFF',
-  muted: '#8C8B96',
-  line: 'rgba(255,255,255,0.08)',
-  accent: '#6E5BFF',
-  toolsBlue: '#1F8FFF',
-  snapCard: '#FFFFFF',
+  accent: '#0A84FF',
+  bgLight: '#F2F2F7',
+  cardWhite: '#FFFFFF',
+  darkBg: '#1C1C1E',
+  darkCard: '#2C2C2E',
+  overlay: 'rgba(20,20,24,0.55)',
+  overlaySolid: '#17171B',
+  chipOff: 'rgba(255,255,255,0.16)',
+  circleOff: 'rgba(255,255,255,0.18)',
+  textMutedLight: 'rgba(60,60,67,0.6)',
+  green: '#30B554',
+  greenBg: '#E8F8EE',
+  purple: '#AF52DE',
+  purpleBg: 'rgba(175,82,222,0.14)',
+  blueChipBg: 'rgba(10,132,255,0.12)',
+  blueChipBorder: 'rgba(10,132,255,0.35)',
+  greenChipBg: 'rgba(48,181,84,0.16)',
+  greenChipText: '#1F8A3D',
+  orange: '#FF9F0A',
+  segTrack: 'rgba(118,118,128,0.12)',
+  // dark admin variants
+  newBg: 'rgba(10,132,255,0.22)', newText: '#64B5FF',
+  progBg: 'rgba(255,159,10,0.22)', progText: '#FFB84D',
+  fixedBg: 'rgba(48,181,84,0.22)', fixedText: '#5ED47F',
 };
 
 let CONFIG = {
@@ -198,9 +214,40 @@ function timeAgo(iso) {
   return `${Math.floor(d / 86400)}g`;
 }
 
+const CATEGORIES = ['Bug', 'Suggestion', 'Other'];
+
+function statusBucket(status) {
+  const s = String(status || 'open').toLowerCase();
+  if (s === 'planned' || s === 'in_progress') return 'Planned';
+  if (s === 'shipped' || s === 'done' || s === 'closed') return 'Done';
+  return 'Open';
+}
+
+function tagChipColors(bucket) {
+  if (bucket === 'Planned') return { bg: T.purpleBg, text: T.purple };
+  if (bucket === 'Done') return { bg: T.greenChipBg, text: T.greenChipText };
+  return { bg: T.blueChipBg, text: T.accent };
+}
+
+function adminStatusColors(status) {
+  const s = String(status || 'new').toLowerCase();
+  if (s === 'in_progress' || s === 'in progress') return { bg: T.progBg, text: T.progText, label: 'In progress' };
+  if (s === 'fixed' || s === 'resolved' || s === 'closed') return { bg: T.fixedBg, text: T.fixedText, label: 'Fixed' };
+  return { bg: T.newBg, text: T.newText, label: 'New' };
+}
+
+function severityDotColor(sev) {
+  const s = String(sev || '').toLowerCase();
+  if (s === 'high' || s === 'critical') return '#FF453A';
+  if (s === 'low') return '#8E8E93';
+  if (s === 'medium') return T.orange;
+  return null;
+}
+
 function FlayOverlay({ snapUri }) {
   const [screen, setScreen] = useState('home');
   const [note, setNote] = useState('');
+  const [category, setCategory] = useState('Bug');
   const [submitting, setSubmitting] = useState(false);
   const [toast, setToast] = useState(null);
   const [pulling, setPulling] = useState(false);
@@ -238,6 +285,8 @@ function FlayOverlay({ snapUri }) {
   const [features, setFeatures] = useState(null);
   const [loadingFeatures, setLoadingFeatures] = useState(false);
   const [featTitle, setFeatTitle] = useState('');
+  const [showAddFeature, setShowAddFeature] = useState(false);
+  const [featFilter, setFeatFilter] = useState('Open');
   const [voterId, setVoterId] = useState(null);
   const { appName, appId, version, endpoint } = CONFIG;
 
@@ -294,6 +343,7 @@ function FlayOverlay({ snapUri }) {
     const t = featTitle.trim();
     if (!t) return;
     setFeatTitle('');
+    setShowAddFeature(false);
     await submitFeature({ endpoint, appId, title: t, authorId: voterId });
     loadFeatures();
   }, [featTitle, endpoint, appId, voterId, loadFeatures]);
@@ -309,13 +359,13 @@ function FlayOverlay({ snapUri }) {
     const text = (note || '').trim();
     if (!text || submitting) return;
     setSubmitting(true);
-    const res = await postBug({ endpoint, appId, version, note: text, screenshot: snapUri });
+    const prefixed = category === 'Bug' ? text : `[${category}] ${text}`;
+    const res = await postBug({ endpoint, appId, version, note: prefixed, screenshot: snapUri });
     setSubmitting(false);
     if (res && res.ok) {
-      setToast('Gönderildi.');
       setNote('');
       if (screen === 'bugs') loadBugs();
-      setTimeout(() => { setToast(null); }, 1400);
+      setScreen('sent');
     } else if (res && res.queued) {
       setToast('Bağlanılamadı — tekrar denenecek.');
       setNote('');
@@ -324,52 +374,65 @@ function FlayOverlay({ snapUri }) {
       setToast('Hata. Tekrar dene.');
       setTimeout(() => setToast(null), 2000);
     }
-  }, [note, submitting, endpoint, appId, version, screen, loadBugs]);
+  }, [note, category, submitting, endpoint, appId, version, snapUri, screen, loadBugs]);
+
+  const filteredFeatures = (features || []).filter(f => statusBucket(f.status) === featFilter);
 
   return (
-    <View style={{ flex: 1, backgroundColor: T.bg }}>
+    <View style={{ flex: 1, backgroundColor: screen === 'features' ? T.bgLight : (screen === 'bugs' ? T.darkBg : T.overlaySolid) }}>
       <StatusBar barStyle="light-content" />
       <KeyboardAvoidingView
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         style={{ flex: 1 }}
         keyboardVerticalOffset={0}
       >
+        {screen !== 'sent' && (
         <View style={{ paddingTop: 56, paddingHorizontal: 16, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-          <Pressable onPress={screen === 'home' ? close : () => setScreen('home')} hitSlop={12} style={{ width: 38, height: 38, borderRadius: 19, backgroundColor: T.panel, alignItems: 'center', justifyContent: 'center' }}>
-            <Text style={{ color: T.text, fontSize: 18 }}>{screen === 'home' ? '⌂' : '‹'}</Text>
+          <Pressable
+            onPress={screen === 'home' ? close : () => setScreen('home')}
+            hitSlop={12}
+            style={{
+              width: 32, height: 32, borderRadius: 16, alignItems: 'center', justifyContent: 'center',
+              backgroundColor: screen === 'features' ? '#E5E5EA' : T.circleOff,
+            }}
+          >
+            <Text style={{ color: screen === 'features' ? '#3C3C43' : '#FFFFFF', fontSize: 16 }}>{screen === 'home' ? '✕' : '‹'}</Text>
           </Pressable>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-            <Text style={{ color: T.text, fontSize: 17, fontWeight: '600' }}>
-              {screen === 'bugs' ? 'Buglar (admin)' : screen === 'features' ? 'Öneriler' : 'flay'}
-            </Text>
-          </View>
+          <Text style={{
+            color: screen === 'features' ? '#000000' : '#FFFFFF',
+            fontSize: screen === 'features' ? 28 : 16,
+            fontWeight: screen === 'features' ? '700' : '600',
+          }}>
+            {screen === 'bugs' ? 'Buglar (admin)' : screen === 'features' ? 'Requests' : 'Send Feedback'}
+          </Text>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
             {screen === 'home' && (
-              <>
-                <Pressable hitSlop={8} onPress={openFeatures} style={{ paddingHorizontal: 12, height: 38, borderRadius: 19, backgroundColor: T.panel, alignItems: 'center', justifyContent: 'center' }}>
-                  <Text style={{ color: T.text, fontSize: 13, fontWeight: '600' }}>Öneriler</Text>
-                </Pressable>
-                <Pressable hitSlop={8} onPress={openBugs} style={{ paddingHorizontal: 12, height: 38, borderRadius: 19, backgroundColor: T.panel, alignItems: 'center', justifyContent: 'center' }}>
-                  <Text style={{ color: T.text, fontSize: 13, fontWeight: '600' }}>Bugs</Text>
-                </Pressable>
-              </>
+              <Pressable hitSlop={8} onPress={openFeatures} style={{ paddingHorizontal: 12, height: 32, borderRadius: 16, backgroundColor: T.circleOff, alignItems: 'center', justifyContent: 'center' }}>
+                <Text style={{ color: '#FFFFFF', fontSize: 12, fontWeight: '600' }}>Requests</Text>
+              </Pressable>
             )}
             {(screen === 'bugs' && adminToken) && (
-              <Pressable hitSlop={8} onPress={loadBugs} style={{ paddingHorizontal: 14, height: 38, borderRadius: 19, backgroundColor: T.accent, alignItems: 'center', justifyContent: 'center' }}>
-                <Text style={{ color: '#FFF', fontSize: 14, fontWeight: '600' }}>↻</Text>
+              <Pressable hitSlop={8} onPress={loadBugs} style={{ paddingHorizontal: 14, height: 32, borderRadius: 16, backgroundColor: T.accent, alignItems: 'center', justifyContent: 'center' }}>
+                <Text style={{ color: '#FFF', fontSize: 13, fontWeight: '600' }}>↻</Text>
               </Pressable>
             )}
             {screen === 'features' && (
-              <Pressable hitSlop={8} onPress={loadFeatures} style={{ paddingHorizontal: 14, height: 38, borderRadius: 19, backgroundColor: T.accent, alignItems: 'center', justifyContent: 'center' }}>
-                <Text style={{ color: '#FFF', fontSize: 14, fontWeight: '600' }}>↻</Text>
+              <Pressable hitSlop={8} onPress={() => setShowAddFeature(v => !v)} style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: T.accent, alignItems: 'center', justifyContent: 'center' }}>
+                <Text style={{ color: '#FFF', fontSize: 20, fontWeight: '600' }}>+</Text>
               </Pressable>
             )}
+            {screen === 'home' && <Pressable hitSlop={8} onPress={openBugs} style={{ display: 'none' }} />}
           </View>
         </View>
+        )}
 
-        {screen === 'home' && (
-          <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
-            <Animated.View style={{ width: '60%', aspectRatio: 0.46, backgroundColor: T.snapCard, borderRadius: 28, overflow: 'hidden', transform: [{ scale }], opacity }}>
+        {screen === 'home' && !toast && (
+          <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', paddingBottom: 40 }}>
+            <Animated.View style={{
+              width: '48%', aspectRatio: 0.46, backgroundColor: T.cardWhite, borderRadius: 18, overflow: 'hidden',
+              borderWidth: 2, borderColor: '#FFFFFF', transform: [{ scale }], opacity,
+              shadowColor: '#000', shadowOpacity: 0.35, shadowRadius: 16, shadowOffset: { width: 0, height: 8 }, elevation: 8,
+            }}>
               {snapUri ? (
                 <Image source={{ uri: snapUri }} style={{ width: '100%', height: '100%' }} resizeMode="cover" />
               ) : (
@@ -378,12 +441,28 @@ function FlayOverlay({ snapUri }) {
                 </View>
               )}
             </Animated.View>
-            <Pressable onPress={pullUpdate} style={{ position: 'absolute', right: 14, top: '46%', alignItems: 'center', gap: 4 }}>
-              <View style={{ width: 56, height: 56, borderRadius: 28, backgroundColor: T.toolsBlue, alignItems: 'center', justifyContent: 'center' }}>
-                <Text style={{ color: '#FFF', fontSize: 22 }}>{pulling ? '⟳' : '⚙'}</Text>
-              </View>
-              <View style={{ paddingHorizontal: 10, paddingVertical: 3, borderRadius: 10, backgroundColor: 'rgba(0,0,0,0.55)' }}>
-                <Text style={{ color: T.text, fontSize: 11 }}>{pulling ? 'Çekiyor…' : 'Yeni sürümü çek'}</Text>
+
+            <View style={{ flexDirection: 'row', gap: 8, marginTop: 22 }}>
+              {CATEGORIES.map((c) => {
+                const on = category === c;
+                return (
+                  <Pressable
+                    key={c}
+                    onPress={() => setCategory(c)}
+                    style={{
+                      paddingHorizontal: 14, height: 34, borderRadius: 17, alignItems: 'center', justifyContent: 'center',
+                      backgroundColor: on ? T.accent : T.chipOff,
+                    }}
+                  >
+                    <Text style={{ color: '#FFFFFF', fontSize: 13, fontWeight: '600' }}>{c}</Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+
+            <Pressable onPress={pullUpdate} style={{ position: 'absolute', right: 14, top: '40%', alignItems: 'center', gap: 4 }}>
+              <View style={{ width: 44, height: 44, borderRadius: 22, backgroundColor: T.darkCard, alignItems: 'center', justifyContent: 'center' }}>
+                <Text style={{ color: '#FFF', fontSize: 18 }}>{pulling ? '⟳' : '⚙'}</Text>
               </View>
             </Pressable>
           </View>
@@ -391,19 +470,19 @@ function FlayOverlay({ snapUri }) {
 
         {screen === 'bugs' && !adminToken && (
           <View style={{ flex: 1, paddingHorizontal: 20, paddingTop: 40 }}>
-            <Text style={{ color: T.muted, fontSize: 13, marginBottom: 14 }}>
+            <Text style={{ color: T.textMutedLight, fontSize: 13, marginBottom: 14 }}>
               Bug listesi sadece operatöre açık. Admin token gir.
             </Text>
-            <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: T.panel, borderRadius: 14, paddingHorizontal: 12 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: T.darkCard, borderRadius: 14, paddingHorizontal: 12 }}>
               <TextInput
                 value={tokenInput}
                 onChangeText={setTokenInput}
                 placeholder="admin token"
-                placeholderTextColor={T.muted}
+                placeholderTextColor="#8C8B96"
                 secureTextEntry
                 autoCapitalize="none"
                 autoCorrect={false}
-                style={{ flex: 1, color: T.text, fontSize: 14, paddingVertical: 12 }}
+                style={{ flex: 1, color: '#FFFFFF', fontSize: 14, paddingVertical: 12 }}
               />
               <Pressable onPress={saveToken} hitSlop={8}>
                 <Text style={{ color: T.accent, fontSize: 14, fontWeight: '600', paddingLeft: 10 }}>Kaydet</Text>
@@ -415,100 +494,181 @@ function FlayOverlay({ snapUri }) {
           <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 14, paddingBottom: 100 }}>
             {loadingBugs && (
               <View style={{ paddingVertical: 40, alignItems: 'center' }}>
-                <ActivityIndicator color={T.text} />
+                <ActivityIndicator color="#FFFFFF" />
               </View>
             )}
             {!loadingBugs && bugs && bugs.length === 0 && (
               <View style={{ paddingVertical: 60, alignItems: 'center' }}>
-                <Text style={{ color: T.muted, fontSize: 14 }}>Henüz bildirilmiş bug yok.</Text>
+                <Text style={{ color: '#8C8B96', fontSize: 14 }}>Henüz bildirilmiş bug yok.</Text>
               </View>
             )}
-            {!loadingBugs && bugs && bugs.map((b) => (
-              <View key={b.id} style={{ backgroundColor: T.panel, borderRadius: 14, padding: 12, marginBottom: 10 }}>
-                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
-                  <Text style={{ color: T.muted, fontSize: 11 }}>{timeAgo(b.created_at)} · v{b.version || '?'}</Text>
-                  <View style={{ paddingHorizontal: 8, paddingVertical: 2, borderRadius: 8, backgroundColor: T.panelMuted }}>
-                    <Text style={{ color: T.text, fontSize: 10 }}>{b.status}</Text>
+            {!loadingBugs && bugs && bugs.map((b) => {
+              const sc = adminStatusColors(b.status);
+              const dot = severityDotColor(b.severity);
+              return (
+                <View key={b.id} style={{ backgroundColor: T.darkBg, borderRadius: 18, padding: 12, marginBottom: 10, flexDirection: 'row', gap: 10 }}>
+                  <View style={{ width: 44, height: 78, borderRadius: 8, backgroundColor: T.darkCard, overflow: 'hidden' }}>
+                    {b.screenshot ? (
+                      <Image source={{ uri: b.screenshot }} style={{ width: '100%', height: '100%' }} resizeMode="cover" />
+                    ) : null}
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flex: 1 }}>
+                        {dot ? <View style={{ width: 7, height: 7, borderRadius: 3.5, backgroundColor: dot }} /> : null}
+                        <Text style={{ color: '#FFFFFF', fontSize: 14, fontWeight: '600', flexShrink: 1 }} numberOfLines={1}>{b.note}</Text>
+                      </View>
+                      <View style={{ paddingHorizontal: 8, paddingVertical: 3, borderRadius: 8, backgroundColor: sc.bg }}>
+                        <Text style={{ color: sc.text, fontSize: 10, fontWeight: '600' }}>{sc.label}</Text>
+                      </View>
+                    </View>
+                    <Text style={{ color: '#8C8B96', fontSize: 11, marginBottom: 4 }}>{timeAgo(b.created_at)} · v{b.version || '?'}</Text>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                      <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: T.orange }} />
+                      <Text style={{ color: T.orange, fontSize: 11, fontWeight: '700', letterSpacing: 0.4 }}>ADMIN ONLY</Text>
+                    </View>
                   </View>
                 </View>
-                <Text style={{ color: T.text, fontSize: 14 }}>{b.note}</Text>
-              </View>
-            ))}
+              );
+            })}
           </ScrollView>
         )}
 
         {screen === 'features' && (
-          <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 14, paddingBottom: 100 }}>
-            {loadingFeatures && (
-              <View style={{ paddingVertical: 40, alignItems: 'center' }}>
-                <ActivityIndicator color={T.text} />
+          <View style={{ flex: 1 }}>
+            <View style={{ paddingHorizontal: 14, marginTop: 4, marginBottom: 10 }}>
+              <View style={{ flexDirection: 'row', backgroundColor: T.segTrack, borderRadius: 10, padding: 2 }}>
+                {['Open', 'Planned', 'Done'].map((s) => {
+                  const on = featFilter === s;
+                  return (
+                    <Pressable key={s} onPress={() => setFeatFilter(s)} style={{
+                      flex: 1, paddingVertical: 7, borderRadius: 8, alignItems: 'center',
+                      backgroundColor: on ? '#FFFFFF' : 'transparent',
+                      shadowColor: on ? '#000' : 'transparent', shadowOpacity: on ? 0.12 : 0, shadowRadius: 3, shadowOffset: { width: 0, height: 1 },
+                    }}>
+                      <Text style={{ color: on ? '#000000' : 'rgba(60,60,67,0.6)', fontSize: 13, fontWeight: '600' }}>{s}</Text>
+                    </Pressable>
+                  );
+                })}
               </View>
-            )}
-            {!loadingFeatures && features && features.length === 0 && (
-              <View style={{ paddingVertical: 40, alignItems: 'center' }}>
-                <Text style={{ color: T.muted, fontSize: 14 }}>Henüz öneri yok — ilk sen ekle.</Text>
-              </View>
-            )}
-            {!loadingFeatures && features && features.map((f) => (
-              <View key={f.id} style={{ backgroundColor: T.panel, borderRadius: 14, padding: 12, marginBottom: 10, flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-                <Pressable onPress={() => vote(f)} style={{ width: 44, height: 44, borderRadius: 12, backgroundColor: f.votedByMe ? T.accent : T.panelMuted, alignItems: 'center', justifyContent: 'center' }}>
-                  <Text style={{ color: '#FFF', fontSize: 13, fontWeight: '700' }}>▲{f.votes}</Text>
-                </Pressable>
-                <View style={{ flex: 1 }}>
-                  <Text style={{ color: T.text, fontSize: 14, fontWeight: '600' }}>{f.title}</Text>
-                  {!!f.description && <Text style={{ color: T.muted, fontSize: 12, marginTop: 2 }}>{f.description}</Text>}
-                </View>
-              </View>
-            ))}
-            <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: T.panel, borderRadius: 22, paddingHorizontal: 14, paddingVertical: 6, marginTop: 8 }}>
-              <TextInput
-                value={featTitle}
-                onChangeText={setFeatTitle}
-                placeholder="Yeni öneri…"
-                placeholderTextColor={T.muted}
-                style={{ flex: 1, color: T.text, fontSize: 14, paddingVertical: 8 }}
-              />
-              <Pressable onPress={submitNewFeature} disabled={!featTitle.trim()} hitSlop={8}>
-                <Text style={{ color: featTitle.trim() ? T.accent : T.muted, fontSize: 14, fontWeight: '600', paddingLeft: 10 }}>Ekle</Text>
-              </Pressable>
             </View>
-          </ScrollView>
+
+            {showAddFeature && (
+              <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: T.cardWhite, borderRadius: 18, paddingHorizontal: 14, paddingVertical: 6, marginHorizontal: 14, marginBottom: 10 }}>
+                <TextInput
+                  value={featTitle}
+                  onChangeText={setFeatTitle}
+                  placeholder="Yeni öneri…"
+                  placeholderTextColor="rgba(60,60,67,0.4)"
+                  autoFocus
+                  style={{ flex: 1, color: '#000000', fontSize: 14, paddingVertical: 8 }}
+                  onSubmitEditing={submitNewFeature}
+                />
+                <Pressable onPress={submitNewFeature} disabled={!featTitle.trim()} hitSlop={8}>
+                  <Text style={{ color: featTitle.trim() ? T.accent : '#C7C7CC', fontSize: 14, fontWeight: '600', paddingLeft: 10 }}>Ekle</Text>
+                </Pressable>
+              </View>
+            )}
+
+            <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingHorizontal: 14, paddingBottom: 100 }}>
+              {loadingFeatures && (
+                <View style={{ paddingVertical: 40, alignItems: 'center' }}>
+                  <ActivityIndicator color="#000000" />
+                </View>
+              )}
+              {!loadingFeatures && filteredFeatures.length === 0 && (
+                <View style={{ paddingVertical: 40, alignItems: 'center' }}>
+                  <Text style={{ color: T.textMutedLight, fontSize: 14 }}>Bu kategoride öneri yok.</Text>
+                </View>
+              )}
+              {!loadingFeatures && filteredFeatures.map((f) => {
+                const bucket = statusBucket(f.status);
+                const tag = tagChipColors(bucket);
+                return (
+                  <View key={f.id} style={{
+                    backgroundColor: T.cardWhite, borderRadius: 18, padding: 12, marginBottom: 10,
+                    flexDirection: 'row', alignItems: 'center', gap: 10,
+                  }}>
+                    <Pressable onPress={() => vote(f)} style={{
+                      minWidth: 44, paddingHorizontal: 8, paddingVertical: 8, borderRadius: 12, alignItems: 'center', justifyContent: 'center',
+                      backgroundColor: f.votedByMe ? T.blueChipBg : T.bgLight,
+                      borderWidth: f.votedByMe ? 1 : 0, borderColor: T.blueChipBorder,
+                    }}>
+                      <Text style={{ color: f.votedByMe ? T.accent : '#3C3C43', fontSize: 11, fontWeight: '700' }}>▲</Text>
+                      <Text style={{ color: f.votedByMe ? T.accent : '#3C3C43', fontSize: 13, fontWeight: '700' }}>{f.votes}</Text>
+                    </Pressable>
+                    <View style={{ flex: 1 }}>
+                      <Text style={{ color: '#000000', fontSize: 16, fontWeight: '600' }}>{f.title}</Text>
+                      {!!f.description && <Text style={{ color: T.textMutedLight, fontSize: 14, marginTop: 2 }}>{f.description}</Text>}
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 6 }}>
+                        <View style={{ paddingHorizontal: 8, paddingVertical: 3, borderRadius: 8, backgroundColor: tag.bg }}>
+                          <Text style={{ color: tag.text, fontSize: 11, fontWeight: '600' }}>{bucket}</Text>
+                        </View>
+                        {!!f.created_at && <Text style={{ color: T.textMutedLight, fontSize: 12 }}>{timeAgo(f.created_at)} ago</Text>}
+                      </View>
+                    </View>
+                  </View>
+                );
+              })}
+            </ScrollView>
+          </View>
         )}
 
         {toast && (
-          <View style={{ position: 'absolute', top: 110, alignSelf: 'center', backgroundColor: T.panel, paddingHorizontal: 14, paddingVertical: 8, borderRadius: 12 }}>
-            <Text style={{ color: T.text, fontSize: 13 }}>{toast}</Text>
+          <View style={{ position: 'absolute', top: 110, alignSelf: 'center', backgroundColor: T.darkCard, paddingHorizontal: 14, paddingVertical: 8, borderRadius: 12 }}>
+            <Text style={{ color: '#FFFFFF', fontSize: 13 }}>{toast}</Text>
           </View>
         )}
 
         {screen === 'home' && (
         <View style={{ paddingHorizontal: 14, paddingBottom: 28, paddingTop: 8 }}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: T.panel, borderRadius: 22, paddingHorizontal: 14, paddingVertical: 8, gap: 8 }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(255,255,255,0.98)', borderRadius: 22, paddingHorizontal: 14, paddingVertical: 8, gap: 8 }}>
             <TextInput
               value={note}
               onChangeText={setNote}
               placeholder="Bug bildir…"
-              placeholderTextColor={T.muted}
+              placeholderTextColor="rgba(60,60,67,0.4)"
               multiline
               keyboardType="default"
               autoComplete="off"
               autoCapitalize="sentences"
               autoCorrect
-              style={{ flex: 1, color: T.text, fontSize: 15, maxHeight: 120, paddingVertical: 6 }}
+              style={{ flex: 1, color: '#000000', fontSize: 15, maxHeight: 120, paddingVertical: 6 }}
             />
             <Pressable
               onPress={submit}
               disabled={!note.trim() || submitting}
               hitSlop={8}
-              style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: note.trim() ? T.accent : T.panelMuted, alignItems: 'center', justifyContent: 'center' }}
+              style={{ width: 34, height: 34, borderRadius: 17, backgroundColor: note.trim() ? T.accent : '#D1D1D6', alignItems: 'center', justifyContent: 'center' }}
             >
-              <Text style={{ color: '#FFF', fontSize: 16 }}>{submitting ? '…' : '↑'}</Text>
+              <Text style={{ color: '#FFF', fontSize: 15 }}>{submitting ? '…' : '↑'}</Text>
             </Pressable>
           </View>
-          <Text style={{ color: T.muted, fontSize: 11, marginTop: 8, textAlign: 'center' }}>
+          <Text style={{ color: 'rgba(255,255,255,0.5)', fontSize: 11, marginTop: 8, textAlign: 'center' }}>
             {appId} · v{version} · Friday'e gönderilir
           </Text>
         </View>
+        )}
+
+        {screen === 'sent' && (
+          <View style={{ flex: 1, justifyContent: 'flex-end' }}>
+            <View style={{
+              backgroundColor: T.cardWhite, borderTopLeftRadius: 32, borderTopRightRadius: 32,
+              paddingHorizontal: 24, paddingTop: 32, paddingBottom: 40, alignItems: 'center',
+            }}>
+              <View style={{ width: 72, height: 72, borderRadius: 36, backgroundColor: T.greenBg, alignItems: 'center', justifyContent: 'center', marginBottom: 18 }}>
+                <Text style={{ color: T.green, fontSize: 34, fontWeight: '700' }}>✓</Text>
+              </View>
+              <Text style={{ color: '#000000', fontSize: 24, fontWeight: '700', marginBottom: 6 }}>Feedback sent</Text>
+              <Text style={{ color: T.textMutedLight, fontSize: 15, marginBottom: 26, textAlign: 'center' }}>Thanks for helping us improve.</Text>
+              <Pressable
+                onPress={close}
+                style={{ width: '100%', height: 52, borderRadius: 26, backgroundColor: T.accent, alignItems: 'center', justifyContent: 'center' }}
+              >
+                <Text style={{ color: '#FFFFFF', fontSize: 16, fontWeight: '700' }}>Done</Text>
+              </Pressable>
+            </View>
+          </View>
         )}
       </KeyboardAvoidingView>
     </View>
@@ -525,6 +685,7 @@ export function FeatureBoard({ style }) {
   const [loading, setLoading] = useState(true);
   const [title, setTitle] = useState('');
   const [voterId, setVoterId] = useState(null);
+  const [filter, setFilter] = useState('Open');
 
   useEffect(() => { getVoterId().then(setVoterId); }, []);
 
@@ -552,39 +713,68 @@ export function FeatureBoard({ style }) {
     load();
   }, [title, endpoint, appId, voterId, load]);
 
+  const filtered = (features || []).filter(f => statusBucket(f.status) === filter);
+
   return (
-    <View style={[{ flex: 1, backgroundColor: T.bg }, style]}>
-      <ScrollView contentContainerStyle={{ padding: 14, paddingBottom: 100 }}>
+    <View style={[{ flex: 1, backgroundColor: T.bgLight }, style]}>
+      <View style={{ paddingHorizontal: 14, paddingTop: 14, marginBottom: 10 }}>
+        <View style={{ flexDirection: 'row', backgroundColor: T.segTrack, borderRadius: 10, padding: 2 }}>
+          {['Open', 'Planned', 'Done'].map((s) => {
+            const on = filter === s;
+            return (
+              <Pressable key={s} onPress={() => setFilter(s)} style={{
+                flex: 1, paddingVertical: 7, borderRadius: 8, alignItems: 'center',
+                backgroundColor: on ? '#FFFFFF' : 'transparent',
+              }}>
+                <Text style={{ color: on ? '#000000' : 'rgba(60,60,67,0.6)', fontSize: 13, fontWeight: '600' }}>{s}</Text>
+              </Pressable>
+            );
+          })}
+        </View>
+      </View>
+      <ScrollView contentContainerStyle={{ paddingHorizontal: 14, paddingBottom: 100 }}>
         {loading && (
-          <View style={{ paddingVertical: 40, alignItems: 'center' }}><ActivityIndicator color={T.text} /></View>
+          <View style={{ paddingVertical: 40, alignItems: 'center' }}><ActivityIndicator color="#000000" /></View>
         )}
-        {!loading && features && features.length === 0 && (
+        {!loading && filtered.length === 0 && (
           <View style={{ paddingVertical: 40, alignItems: 'center' }}>
-            <Text style={{ color: T.muted, fontSize: 14 }}>Henüz öneri yok — ilk sen ekle.</Text>
+            <Text style={{ color: T.textMutedLight, fontSize: 14 }}>Bu kategoride öneri yok.</Text>
           </View>
         )}
-        {!loading && features && features.map((f) => (
-          <View key={f.id} style={{ backgroundColor: T.panel, borderRadius: 14, padding: 12, marginBottom: 10, flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-            <Pressable onPress={() => vote(f)} style={{ width: 44, height: 44, borderRadius: 12, backgroundColor: f.votedByMe ? T.accent : T.panelMuted, alignItems: 'center', justifyContent: 'center' }}>
-              <Text style={{ color: '#FFF', fontSize: 13, fontWeight: '700' }}>▲{f.votes}</Text>
-            </Pressable>
-            <View style={{ flex: 1 }}>
-              <Text style={{ color: T.text, fontSize: 14, fontWeight: '600' }}>{f.title}</Text>
-              {!!f.description && <Text style={{ color: T.muted, fontSize: 12, marginTop: 2 }}>{f.description}</Text>}
+        {!loading && filtered.map((f) => {
+          const bucket = statusBucket(f.status);
+          const tag = tagChipColors(bucket);
+          return (
+            <View key={f.id} style={{ backgroundColor: T.cardWhite, borderRadius: 18, padding: 12, marginBottom: 10, flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+              <Pressable onPress={() => vote(f)} style={{
+                minWidth: 44, paddingHorizontal: 8, paddingVertical: 8, borderRadius: 12, alignItems: 'center', justifyContent: 'center',
+                backgroundColor: f.votedByMe ? T.blueChipBg : T.bgLight,
+                borderWidth: f.votedByMe ? 1 : 0, borderColor: T.blueChipBorder,
+              }}>
+                <Text style={{ color: f.votedByMe ? T.accent : '#3C3C43', fontSize: 11, fontWeight: '700' }}>▲</Text>
+                <Text style={{ color: f.votedByMe ? T.accent : '#3C3C43', fontSize: 13, fontWeight: '700' }}>{f.votes}</Text>
+              </Pressable>
+              <View style={{ flex: 1 }}>
+                <Text style={{ color: '#000000', fontSize: 16, fontWeight: '600' }}>{f.title}</Text>
+                {!!f.description && <Text style={{ color: T.textMutedLight, fontSize: 14, marginTop: 2 }}>{f.description}</Text>}
+                <View style={{ paddingHorizontal: 8, paddingVertical: 3, borderRadius: 8, backgroundColor: tag.bg, alignSelf: 'flex-start', marginTop: 6 }}>
+                  <Text style={{ color: tag.text, fontSize: 11, fontWeight: '600' }}>{bucket}</Text>
+                </View>
+              </View>
             </View>
-          </View>
-        ))}
+          );
+        })}
       </ScrollView>
-      <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: T.panel, borderRadius: 22, paddingHorizontal: 14, paddingVertical: 6, margin: 14 }}>
+      <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: T.cardWhite, borderRadius: 22, paddingHorizontal: 14, paddingVertical: 6, margin: 14 }}>
         <TextInput
           value={title}
           onChangeText={setTitle}
           placeholder="Yeni öneri…"
-          placeholderTextColor={T.muted}
-          style={{ flex: 1, color: T.text, fontSize: 14, paddingVertical: 8 }}
+          placeholderTextColor="rgba(60,60,67,0.4)"
+          style={{ flex: 1, color: '#000000', fontSize: 14, paddingVertical: 8 }}
         />
         <Pressable onPress={submit} disabled={!title.trim()} hitSlop={8}>
-          <Text style={{ color: title.trim() ? T.accent : T.muted, fontSize: 14, fontWeight: '600', paddingLeft: 10 }}>Ekle</Text>
+          <Text style={{ color: title.trim() ? T.accent : '#C7C7CC', fontSize: 14, fontWeight: '600', paddingLeft: 10 }}>Ekle</Text>
         </Pressable>
       </View>
     </View>
