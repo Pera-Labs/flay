@@ -120,6 +120,19 @@ function fetchBugs({ endpoint, appId, adminToken }) {
     .then(r => r.json()).catch((e) => ({ ok: false, error: String(e) }));
 }
 
+function bugShotUrl(endpoint, path) {
+  if (!path) return null;
+  return `${apiBase(endpoint)}/api/bug-shots/${encodeURIComponent(path)}`;
+}
+
+function updateBugStatus({ endpoint, id, adminToken, status }) {
+  return fetch(`${apiBase(endpoint)}/api/bug-reports/${encodeURIComponent(id)}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', 'x-admin-token': adminToken || '' },
+    body: JSON.stringify({ status }),
+  }).then(r => r.json()).catch((e) => ({ ok: false, error: String(e) }));
+}
+
 function fetchFeatures({ endpoint, appId, voterId }) {
   const url = `${apiBase(endpoint)}/api/feature-requests?appId=${encodeURIComponent(appId)}&voterId=${encodeURIComponent(voterId || '')}`;
   return fetch(url).then(r => r.json()).catch((e) => ({ ok: false, error: String(e) }));
@@ -284,6 +297,9 @@ function FlayOverlay({ snapUri }) {
   };
   const [bugs, setBugs] = useState(null);
   const [loadingBugs, setLoadingBugs] = useState(false);
+  const [selectedBug, setSelectedBug] = useState(null);
+  const [fullscreenShot, setFullscreenShot] = useState(false);
+  const [savingStatus, setSavingStatus] = useState(false);
   const [adminToken, setAdminToken] = useState(null);
   const [tokenInput, setTokenInput] = useState('');
   const [pair, setPair] = useState(null);
@@ -363,6 +379,23 @@ function FlayOverlay({ snapUri }) {
     if (adminToken) loadBugs(); else startPairing();
   }, [loadBugs, adminToken, startPairing]);
 
+  const openBugDetail = useCallback((b) => {
+    setSelectedBug(b);
+    setScreen('bugDetail');
+  }, []);
+
+  const setBugStatus = useCallback(async (b, status) => {
+    if (!adminToken || !b) return;
+    setSavingStatus(true);
+    const res = await updateBugStatus({ endpoint, id: b.id, adminToken, status });
+    setSavingStatus(false);
+    if (res && res.ok !== false) {
+      const patched = { ...b, status };
+      setSelectedBug(patched);
+      setBugs((cur) => (cur || []).map((x) => (x.id === b.id ? patched : x)));
+    }
+  }, [endpoint, adminToken]);
+
   const loadFeatures = useCallback(async () => {
     setLoadingFeatures(true);
     const res = await fetchFeatures({ endpoint, appId, voterId });
@@ -415,7 +448,7 @@ function FlayOverlay({ snapUri }) {
   const filteredFeatures = (features || []).filter(f => statusBucket(f.status) === featFilter);
 
   return (
-    <View style={{ flex: 1, backgroundColor: screen === 'features' ? T.bgLight : (screen === 'bugs' ? T.darkBg : T.overlaySolid) }}>
+    <View style={{ flex: 1, backgroundColor: screen === 'features' ? T.bgLight : ((screen === 'bugs' || screen === 'bugDetail') ? T.darkBg : T.overlaySolid) }}>
       <StatusBar barStyle="light-content" />
       <KeyboardAvoidingView
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
@@ -425,7 +458,7 @@ function FlayOverlay({ snapUri }) {
         {screen !== 'sent' && (
         <View style={{ paddingTop: 56, paddingHorizontal: 16, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
           <Pressable
-            onPress={screen === 'home' ? close : () => setScreen('home')}
+            onPress={screen === 'home' ? close : (screen === 'bugDetail' ? () => { setScreen('bugs'); setSelectedBug(null); } : () => setScreen('home'))}
             hitSlop={12}
             style={{
               width: 32, height: 32, borderRadius: 16, alignItems: 'center', justifyContent: 'center',
@@ -439,7 +472,7 @@ function FlayOverlay({ snapUri }) {
             fontSize: screen === 'features' ? 28 : 16,
             fontWeight: screen === 'features' ? '700' : '600',
           }}>
-            {screen === 'bugs' ? 'Buglar (admin)' : screen === 'features' ? 'Requests' : 'Send Feedback'}
+            {screen === 'bugDetail' ? 'Bug detay' : screen === 'bugs' ? 'Buglar (admin)' : screen === 'features' ? 'Requests' : 'Send Feedback'}
           </Text>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
             {screen === 'home' && (
@@ -551,11 +584,12 @@ function FlayOverlay({ snapUri }) {
             {!loadingBugs && bugs && bugs.map((b) => {
               const sc = adminStatusColors(b.status);
               const dot = severityDotColor(b.severity);
+              const shotUri = bugShotUrl(endpoint, b.screenshot_path);
               return (
-                <View key={b.id} style={{ backgroundColor: T.darkBg, borderRadius: 18, padding: 12, marginBottom: 10, flexDirection: 'row', gap: 10 }}>
+                <Pressable key={b.id} onPress={() => openBugDetail(b)} style={{ backgroundColor: T.darkBg, borderRadius: 18, padding: 12, marginBottom: 10, flexDirection: 'row', gap: 10 }}>
                   <View style={{ width: 44, height: 78, borderRadius: 8, backgroundColor: T.darkCard, overflow: 'hidden' }}>
-                    {b.screenshot ? (
-                      <Image source={{ uri: b.screenshot }} style={{ width: '100%', height: '100%' }} resizeMode="cover" />
+                    {shotUri ? (
+                      <Image source={{ uri: shotUri, headers: { 'x-admin-token': adminToken || '' } }} style={{ width: '100%', height: '100%' }} resizeMode="cover" />
                     ) : null}
                   </View>
                   <View style={{ flex: 1 }}>
@@ -574,11 +608,90 @@ function FlayOverlay({ snapUri }) {
                       <Text style={{ color: T.orange, fontSize: 11, fontWeight: '700', letterSpacing: 0.4 }}>ADMIN ONLY</Text>
                     </View>
                   </View>
-                </View>
+                </Pressable>
               );
             })}
           </ScrollView>
         )}
+
+        {screen === 'bugDetail' && selectedBug && (() => {
+          const b = selectedBug;
+          const sc = adminStatusColors(b.status);
+          const shotUri = bugShotUrl(endpoint, b.screenshot_path);
+          let triageNote = null;
+          try {
+            const parsed = JSON.parse(b.triage);
+            const events = (parsed && parsed.events) || [];
+            if (events.length) triageNote = events[events.length - 1].message;
+          } catch {}
+          let verdict = null;
+          try { verdict = b.operator_verdict ? JSON.parse(b.operator_verdict) : null; }
+          catch { verdict = b.operator_verdict; }
+          const isFixed = String(b.status || '').toLowerCase() === 'fixed' || String(b.status || '').toLowerCase() === 'resolved';
+          return (
+            <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 14, paddingBottom: 100 }}>
+              {shotUri ? (
+                <Pressable onPress={() => setFullscreenShot(true)} style={{ width: '100%', height: 260, borderRadius: 16, backgroundColor: T.darkCard, overflow: 'hidden', marginBottom: 14 }}>
+                  <Image source={{ uri: shotUri, headers: { 'x-admin-token': adminToken || '' } }} style={{ width: '100%', height: '100%' }} resizeMode="cover" />
+                </Pressable>
+              ) : (
+                <View style={{ width: '100%', height: 100, borderRadius: 16, backgroundColor: T.darkCard, alignItems: 'center', justifyContent: 'center', marginBottom: 14 }}>
+                  <Text style={{ color: '#8C8B96', fontSize: 13 }}>Ekran görüntüsü yok</Text>
+                </View>
+              )}
+
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+                <View style={{ paddingHorizontal: 10, paddingVertical: 4, borderRadius: 10, backgroundColor: sc.bg }}>
+                  <Text style={{ color: sc.text, fontSize: 12, fontWeight: '700' }}>{sc.label}</Text>
+                </View>
+                {!!verdict && (
+                  <View style={{ paddingHorizontal: 10, paddingVertical: 4, borderRadius: 10, backgroundColor: T.chipOff }}>
+                    <Text style={{ color: '#FFFFFF', fontSize: 12, fontWeight: '600' }}>{String(verdict)}</Text>
+                  </View>
+                )}
+              </View>
+
+              <Text style={{ color: '#FFFFFF', fontSize: 16, fontWeight: '700', marginBottom: 8, lineHeight: 22 }}>{b.note}</Text>
+
+              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginBottom: 14 }}>
+                <Text style={{ color: '#8C8B96', fontSize: 12 }}>v{b.version || '?'}</Text>
+                <Text style={{ color: '#8C8B96', fontSize: 12 }}>·</Text>
+                <Text style={{ color: '#8C8B96', fontSize: 12 }}>{b.source || 'unknown'}</Text>
+                <Text style={{ color: '#8C8B96', fontSize: 12 }}>·</Text>
+                <Text style={{ color: '#8C8B96', fontSize: 12 }}>{b.created_at ? new Date(b.created_at).toLocaleString() : ''}</Text>
+              </View>
+
+              {!!triageNote && (
+                <View style={{ backgroundColor: T.darkCard, borderRadius: 14, padding: 12, marginBottom: 16 }}>
+                  <Text style={{ color: '#8C8B96', fontSize: 11, fontWeight: '700', letterSpacing: 0.4, marginBottom: 6 }}>SON TRIAGE NOTU</Text>
+                  <Text style={{ color: '#FFFFFF', fontSize: 13, lineHeight: 19 }}>{triageNote}</Text>
+                </View>
+              )}
+
+              <Pressable
+                onPress={() => setBugStatus(b, isFixed ? 'new' : 'fixed')}
+                disabled={savingStatus}
+                style={{ height: 48, borderRadius: 24, backgroundColor: T.accent, alignItems: 'center', justifyContent: 'center', opacity: savingStatus ? 0.6 : 1 }}
+              >
+                <Text style={{ color: '#FFFFFF', fontSize: 15, fontWeight: '700' }}>
+                  {savingStatus ? '…' : isFixed ? 'Reopen' : 'Mark fixed'}
+                </Text>
+              </Pressable>
+            </ScrollView>
+          );
+        })()}
+
+        <Modal visible={fullscreenShot} transparent animationType="fade" onRequestClose={() => setFullscreenShot(false)}>
+          <Pressable onPress={() => setFullscreenShot(false)} style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.92)', alignItems: 'center', justifyContent: 'center' }}>
+            {selectedBug && bugShotUrl(endpoint, selectedBug.screenshot_path) ? (
+              <Image
+                source={{ uri: bugShotUrl(endpoint, selectedBug.screenshot_path), headers: { 'x-admin-token': adminToken || '' } }}
+                style={{ width: '100%', height: '80%' }}
+                resizeMode="contain"
+              />
+            ) : null}
+          </Pressable>
+        </Modal>
 
         {screen === 'features' && (
           <View style={{ flex: 1 }}>
