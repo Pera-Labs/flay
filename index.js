@@ -33,6 +33,8 @@ function nativeCapture() {
   return Promise.resolve(null);
 }
 
+let _flaySuppressed = false;
+export function setFlaySuppressed(v) { _flaySuppressed = !!v; }
 const FlayCtx = createContext({ enabled: false, open: () => {}, close: () => {} });
 
 // Feedback SDK design tokens (v0.7.0) — iOS system palette, #0A84FF accent.
@@ -163,6 +165,7 @@ export function FlayProvider({ config = {}, children }) {
   }, []);
 
   const handleOpen = useCallback(async () => {
+    if (_flaySuppressed) return;
     const uri = await captureNow();
     setSnapUri(uri);
     nativePresent();
@@ -174,7 +177,7 @@ export function FlayProvider({ config = {}, children }) {
     const mod = NativeModules && NativeModules.FlayBridge;
     if (!mod) return;
     const emitter = new NativeEventEmitter(mod);
-    const sub = emitter.addListener('FlayOpen', () => { handleOpen(); });
+    const sub = emitter.addListener('FlayOpen', () => { if (_flaySuppressed) return; handleOpen(); });
     return () => { try { sub && sub.remove(); } catch {} };
   }, [handleOpen]);
 
