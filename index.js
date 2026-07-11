@@ -267,16 +267,31 @@ function FlayOverlay({ snapUri }) {
   const [category, setCategory] = useState('Bug');
   const [submitting, setSubmitting] = useState(false);
   const [toast, setToast] = useState(null);
+  const [abRows, setAbRows] = useState(null);
   const [pulling, setPulling] = useState(false);
-  const showAbInfo = async () => {
+  // abInfo() may return a plain string (legacy, read-only) or an array of
+  // { label, value, onPress? } rows — rows with onPress render as tappable so
+  // the host app can let the operator flip an A/B bucket right from the
+  // overlay (onPress does whatever the host wants — override + persist —
+  // then we re-call abInfo() to reflect the new value).
+  const refreshAbInfo = async () => {
     try {
       const fn = CONFIG.abInfo;
       const info = typeof fn === 'function' ? await fn() : null;
-      setToast(String(info || 'AB bilgisi yok'));
+      if (Array.isArray(info)) { setAbRows(info); setToast(null); }
+      else { setToast(String(info || 'AB bilgisi yok')); setAbRows(null); }
     } catch (e) {
       setToast('AB hata: ' + String((e && e.message) || e).slice(0, 80));
+      setAbRows(null);
     }
-    setTimeout(() => setToast(null), 3500);
+  };
+  const showAbInfo = async () => {
+    await refreshAbInfo();
+    setTimeout(() => { setToast(null); setAbRows(null); }, 6000);
+  };
+  const onAbRowPress = async (row) => {
+    try { if (row && typeof row.onPress === 'function') await row.onPress(); } catch (e) {}
+    await refreshAbInfo();
   };
   const pullUpdate = async () => {
     if (pulling) return;
@@ -506,7 +521,7 @@ function FlayOverlay({ snapUri }) {
         )}
 
         {screen === 'home' && (
-          <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', paddingBottom: 40, opacity: toast ? 0 : 1 }} pointerEvents={toast ? 'none' : 'auto'}>
+          <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', paddingBottom: 40, opacity: (toast || abRows) ? 0 : 1 }} pointerEvents={(toast || abRows) ? 'none' : 'auto'}>
             <Animated.View style={{
               width: '48%', aspectRatio: 0.46, backgroundColor: T.cardWhite, borderRadius: 18, overflow: 'hidden',
               borderWidth: 2, borderColor: '#FFFFFF', transform: [{ scale }], opacity,
@@ -797,6 +812,26 @@ function FlayOverlay({ snapUri }) {
             shadowColor: '#000', shadowOpacity: 0.4, shadowRadius: 12, shadowOffset: { width: 0, height: 4 },
           }}>
             <Text style={{ color: '#FFFFFF', fontSize: 13, lineHeight: 19, textAlign: 'center' }}>{toast}</Text>
+          </View>
+        )}
+
+        {abRows && (
+          <View style={{
+            position: 'absolute', top: 110, left: 20, right: 20, alignSelf: 'center', zIndex: 999, elevation: 20,
+            backgroundColor: T.darkCard, paddingHorizontal: 10, paddingVertical: 10, borderRadius: 14, gap: 6,
+            shadowColor: '#000', shadowOpacity: 0.4, shadowRadius: 12, shadowOffset: { width: 0, height: 4 },
+          }}>
+            {abRows.map((row, i) => {
+              const tappable = typeof row.onPress === 'function';
+              const Row = tappable ? Pressable : View;
+              return (
+                <Row key={row.label || i} onPress={tappable ? () => onAbRowPress(row) : undefined}
+                  style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 8, paddingVertical: 8, borderRadius: 10, backgroundColor: tappable ? 'rgba(255,255,255,0.08)' : 'transparent' }}>
+                  <Text style={{ color: '#FFFFFF', fontSize: 13 }}>{row.label}</Text>
+                  <Text style={{ color: tappable ? (T.accent || '#0A84FF') : '#FFFFFF', fontSize: 13, fontWeight: '700' }}>{row.value}{tappable ? '  ↻' : ''}</Text>
+                </Row>
+              );
+            })}
           </View>
         )}
 
