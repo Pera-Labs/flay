@@ -268,6 +268,16 @@ function FlayOverlay({ snapUri }) {
   const [submitting, setSubmitting] = useState(false);
   const [toast, setToast] = useState(null);
   const [pulling, setPulling] = useState(false);
+  const showAbInfo = async () => {
+    try {
+      const fn = CONFIG.abInfo;
+      const info = typeof fn === 'function' ? await fn() : null;
+      setToast(String(info || 'AB bilgisi yok'));
+    } catch (e) {
+      setToast('AB hata: ' + String((e && e.message) || e).slice(0, 80));
+    }
+    setTimeout(() => setToast(null), 3500);
+  };
   const pullUpdate = async () => {
     if (pulling) return;
     setPulling(true);
@@ -534,6 +544,13 @@ function FlayOverlay({ snapUri }) {
                 <Text style={{ color: '#FFF', fontSize: 18 }}>{pulling ? '⟳' : '⚙'}</Text>
               </View>
             </Pressable>
+            {typeof CONFIG.abInfo === 'function' && (
+              <Pressable onPress={showAbInfo} style={{ position: 'absolute', right: 14, top: '48%', alignItems: 'center', gap: 4 }}>
+                <View style={{ width: 44, height: 44, borderRadius: 22, backgroundColor: T.darkCard, alignItems: 'center', justifyContent: 'center' }}>
+                  <Text style={{ color: '#FFF', fontSize: 13, fontWeight: '700' }}>AB</Text>
+                </View>
+              </Pressable>
+            )}
           </View>
         )}
 
