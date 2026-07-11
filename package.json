@@ -1,7 +1,7 @@
 {
   "name": "flay",
-  "version": "0.7.6",
-  "description": "Flay \u2014 in-app overlay (snapshot card + admin-only bug reporter + public feature-request board) for React Native / Expo apps.",
+  "version": "0.7.7",
+  "description": "Flay — in-app overlay (snapshot card + admin-only bug reporter + public feature-request board) for React Native / Expo apps.",
   "main": "index.js",
   "license": "MIT",
   "repository": {
