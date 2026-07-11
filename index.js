@@ -505,8 +505,8 @@ function FlayOverlay({ snapUri }) {
         </View>
         )}
 
-        {screen === 'home' && !toast && (
-          <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', paddingBottom: 40 }}>
+        {screen === 'home' && (
+          <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', paddingBottom: 40, opacity: toast ? 0 : 1 }} pointerEvents={toast ? 'none' : 'auto'}>
             <Animated.View style={{
               width: '48%', aspectRatio: 0.46, backgroundColor: T.cardWhite, borderRadius: 18, overflow: 'hidden',
               borderWidth: 2, borderColor: '#FFFFFF', transform: [{ scale }], opacity,
@@ -791,8 +791,12 @@ function FlayOverlay({ snapUri }) {
         )}
 
         {toast && (
-          <View style={{ position: 'absolute', top: 110, alignSelf: 'center', backgroundColor: T.darkCard, paddingHorizontal: 14, paddingVertical: 8, borderRadius: 12 }}>
-            <Text style={{ color: '#FFFFFF', fontSize: 13 }}>{toast}</Text>
+          <View style={{
+            position: 'absolute', top: 110, left: 20, right: 20, alignSelf: 'center', zIndex: 999, elevation: 20,
+            backgroundColor: T.darkCard, paddingHorizontal: 16, paddingVertical: 12, borderRadius: 14,
+            shadowColor: '#000', shadowOpacity: 0.4, shadowRadius: 12, shadowOffset: { width: 0, height: 4 },
+          }}>
+            <Text style={{ color: '#FFFFFF', fontSize: 13, lineHeight: 19, textAlign: 'center' }}>{toast}</Text>
           </View>
         )}
 
