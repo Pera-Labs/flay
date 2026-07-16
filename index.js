@@ -35,6 +35,31 @@ function nativeCapture() {
 
 let _flaySuppressed = false;
 export function setFlaySuppressed(v) { _flaySuppressed = !!v; }
+
+// Uncaught-error auto-report: screenshot + POST to Wishly /api/app-errors. Once per
+// error per session; server-gated by the app's error-logging setting.
+const _flayErrSent = new Set();
+async function flayReportError(error) {
+  try {
+    const msg = String((error && (error.message || error)) || 'error').slice(0, 400);
+    const name = (error && error.name) || 'Error';
+    const key = (name + ': ' + msg.split('\n')[0]).slice(0, 120);
+    if (_flayErrSent.has(key)) return;
+    _flayErrSent.add(key);
+    let shot = null; try { shot = await nativeCapture(); } catch (e) {}
+    const base = apiBase(CONFIG.endpoint);
+    const stack = (error && error.stack) ? String(error.stack).slice(0, 1500) : '';
+    await fetch(base + '/api/app-errors', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        appId: CONFIG.appId, errorKey: key,
+        note: msg + (stack ? '\n\n' + stack : ''),
+        screenshot: (typeof shot === 'string' && shot.startsWith('data:')) ? shot : undefined,
+        version: CONFIG.version, count: 1,
+      }),
+    }).catch(() => {});
+  } catch (e) {}
+}
 const FlayCtx = createContext({ enabled: false, open: () => {}, close: () => {} });
 
 // Feedback SDK design tokens (v0.7.0) — iOS system palette, #0A84FF accent.
@@ -167,6 +192,20 @@ export function FlayProvider({ config = {}, children }) {
     _setVisibleExt = setVisible;
     _setSnapExt = setSnapUri;
     return () => { _setVisibleExt = null; _setSnapExt = null; };
+  }, []);
+
+  // Global JS error handler — chain the existing one so app behaviour is unchanged.
+  useEffect(() => {
+    try {
+      const EU = (typeof global !== 'undefined' && global.ErrorUtils) || null;
+      if (!EU || typeof EU.setGlobalHandler !== 'function') return;
+      const prev = typeof EU.getGlobalHandler === 'function' ? EU.getGlobalHandler() : null;
+      EU.setGlobalHandler((error, isFatal) => {
+        flayReportError(error);
+        if (typeof prev === 'function') prev(error, isFatal);
+      });
+      return () => { try { if (prev) EU.setGlobalHandler(prev); } catch (e) {} };
+    } catch (e) {}
   }, []);
 
   const captureNow = useCallback(async () => {
