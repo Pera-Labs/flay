@@ -449,25 +449,22 @@ function FlayOverlay({ snapUri }) {
     await toggleFeatureVote({ endpoint, id: f.id, voterId, voted: f.votedByMe });
   }, [endpoint, voterId]);
 
-  const submit = useCallback(async () => {
+  const submit = useCallback(() => {
     const text = (note || '').trim();
     if (!text || submitting) return;
-    setSubmitting(true);
     const prefixed = category === 'Bug' ? text : `[${category}] ${text}`;
-    const res = await postBug({ endpoint, appId, version, note: prefixed, screenshot: snapUri });
-    setSubmitting(false);
-    if (res && res.ok) {
-      setNote('');
-      if (screen === 'bugs') loadBugs();
-      setScreen('sent');
-    } else if (res && res.queued) {
-      setToast('Bağlanılamadı — tekrar denenecek.');
-      setNote('');
-      setTimeout(() => setToast(null), 2400);
-    } else {
-      setToast('Hata. Tekrar dene.');
-      setTimeout(() => setToast(null), 2000);
-    }
+    const shot = snapUri;
+    // Optimistic: confirm instantly, upload in the background (screenshot + network
+    // shouldn't make the user wait). On hard failure we bounce back with the note kept
+    // and a retry toast; res.queued already auto-retries offline.
+    setScreen('sent');
+    postBug({ endpoint, appId, version, note: prefixed, screenshot: shot })
+      .then((res) => {
+        if (res && res.ok) { setNote(''); if (screen === 'bugs') loadBugs(); }
+        else if (res && res.queued) { setNote(''); }
+        else { setScreen('home'); setToast('Gönderilemedi. Tekrar dene.'); setTimeout(() => setToast(null), 3000); }
+      })
+      .catch(() => { setScreen('home'); setToast('Gönderilemedi. Tekrar dene.'); setTimeout(() => setToast(null), 3000); });
   }, [note, category, submitting, endpoint, appId, version, snapUri, screen, loadBugs]);
 
   const filteredFeatures = (features || []).filter(f => statusBucket(f.status) === featFilter);
